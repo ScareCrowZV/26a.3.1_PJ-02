@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"module20_2_1/logger"
 	ringBuffer "module20_2_1_ringBufferInt"
 	"strconv"
 	"strings"
@@ -40,23 +41,34 @@ type pipelineStageFilterNegative struct {
 
 func (p *pipelineStageFilterNegative) processData(stopWorkChannel <-chan bool, in <-chan int) <-chan int {
 	out := make(chan int)
+
 	go func() {
 		defer close(out)
+		logger.Log("pipelineStageFilterNegative", "Старт горутины")
+		
 		for {
 			select {
 			case num, ok := <-in:
 				if !ok {
+					logger.Log("pipelineStageFilterNegative", "Входной канал закрыт")
 					return
 				}
+				logger.Log("pipelineStageFilterNegative", fmt.Sprintf("Получено число: %d", num) )
+				
 				if num >= 0 {
+					logger.Log("pipelineStageFilterNegative", fmt.Sprintf("Число %d прошло фильтр", num))
 					select {
 					case out <- num:
+						logger.Log("pipelineStageFilterNegative", fmt.Sprintf("Число %d отправлено", num))
 					case <-stopWorkChannel:
+						logger.Log("pipelineStageFilterNegative", "Сигнал остановки")
 						return
 					}
-
+				} else {
+					logger.Log("pipelineStageFilterNegative", fmt.Sprintf("Число %d отфильтровано", num))
 				}
 			case <-stopWorkChannel:
+				logger.Log("pipelineStageFilterNegative", "Сигнал остановки")
 				return
 			}
 		}
@@ -73,18 +85,31 @@ func (p *pipelineStageNotMultiple) processData(stopWorkChannel <-chan bool, in <
 
 	go func() {
 		defer close(out)
+		logger.Log("pipelineStageNotMultiple", "Старт горутины")
+		
 		for {
 			select {
-			case num := <-in:
+			case num, ok := <-in:
+				if !ok {
+					logger.Log("pipelineStageNotMultiple", "Входной канал закрыт")
+					return
+				}
+				logger.Log("pipelineStageNotMultiple", fmt.Sprintf("Получено число: %d", num))
+
 				if num != 0 && num%3 == 0 {
+					logger.Log("pipelineStageNotMultiple", fmt.Sprintf("Число %d кратно 3", num))
 					select {
 					case out <- num:
+						logger.Log("pipelineStageNotMultiple", fmt.Sprintf("Число %d отправлено", num))
 					case <-stopWorkChannel:
+						logger.Log("pipelineStageNotMultiple", "Сигнал остановки")
 						return
 					}
-
+				} else {
+					logger.Log("pipelineStageNotMultiple", fmt.Sprintf("Число %d отфильтровано", num))
 				}
 			case <-stopWorkChannel:
+				logger.Log("pipelineStageNotMultiple", "Сигнал остановки")
 				return
 			}
 		}
@@ -100,13 +125,21 @@ func (b *buffer) processData(stopWorkChannel <-chan bool, in <-chan int) <-chan 
 	out := make(chan int)
 	rb := ringBuffer.CreateRingBuffer(60)
 
+	logger.Log("buffer", "Создан буфер на 60 элементов")
+
 	go func() {
-		defer close(out)
+		logger.Log("buffer", "Старт записи")
 		for {
 			select {
-			case num := <-in:
+			case num, ok := <-in:
+				if !ok {
+					logger.Log("buffer", "Входной канал закрыт")
+					return
+				}
+				logger.Log("buffer", fmt.Sprintf("Добавлено %d", num))
 				rb.Add(num)
 			case <-stopWorkChannel:
+				logger.Log("buffer", "Сигнал остановки")
 				return
 			}
 		}
@@ -114,13 +147,16 @@ func (b *buffer) processData(stopWorkChannel <-chan bool, in <-chan int) <-chan 
 
 	go func() {
 		defer close(out)
+		logger.Log("buffer", fmt.Sprintf("Старт чтения, таймер %d сек", bufferTimeoutSecond))
 		for {
 			select {
 			case <-time.After(time.Duration(bufferTimeoutSecond) * time.Second):
 				if rb.GetCount() > 0 {
 					out <- rb.Release()
+					logger.Log("buffer", "Извлекли значение из буфера")
 				}
 			case <-stopWorkChannel:
+						logger.Log("buffer", "Сигнал остановки")
 				return
 			}
 		}
@@ -137,11 +173,14 @@ func (ts *terminalScanner) startScan(stopWork chan bool) <-chan int {
 
 	go func() {
 		defer close(c)
+		logger.Log("terminalScanner", "Старт сканирования")
+
 		var data string
 
 		for {
 			select {
 			case <-stopWork:
+				logger.Log("terminalScanner", "Сигнал остановки")
 				return
 			default:
 			}
@@ -151,23 +190,31 @@ func (ts *terminalScanner) startScan(stopWork chan bool) <-chan int {
 
 			_, err := fmt.Scanln(&data)
 			if err != nil {
+				logger.Log("terminalScanner",  fmt.Sprintf("Ошибка ввода: %v", err))
 				continue
 			}
 
+			logger.Log("terminalScanner", fmt.Sprintf("Введено: %s", data))
+
 			if strings.EqualFold(data, "exit") {
+				logger.Log("terminalScanner", "Команда exit")
 				close(stopWork)
 				return
 			}
 
 			i, err := strconv.Atoi(data)
 			if err != nil {
+				logger.Log("terminalScanner", "Введено не корректное значение")
 				fmt.Println("Программа обрабатывает только целые числа!")
 				continue
 			}
-
+			
+			logger.Log("terminalScanner",  fmt.Sprintf("Число %d отправлено", i))
 			select {
 			case c <- i:
+				logger.Log("terminalScanner",  fmt.Sprintf("Число %d в канале", i))
 			case <-stopWork:
+				logger.Log("terminalScanner", "Сигнал остановки")
 				return
 			}
 		}
@@ -182,13 +229,16 @@ type pipeline struct {
 }
 
 func createPipeline(stopWorkChannel <-chan bool, pipelineStages ...pipelineStageInterface) *pipeline {
-	return &pipeline{ppStages: pipelineStages, stopWork: stopWorkChannel}
+		logger.Log("createPipeline", "Создали пайплайн")
+		return &pipeline{ppStages: pipelineStages, stopWork: stopWorkChannel}
 }
 
 func (p *pipeline) runPipeline(data <-chan int) <-chan int {
 	resChan := data
+	logger.Log("runPipeline", "Запуск")
 
 	for i := range p.ppStages {
+		logger.Log("runPipeline", "Запуск стадии очередной стадии")
 		resChan = p.runStage(p.ppStages[i], resChan)
 	}
 
@@ -200,13 +250,14 @@ func (p *pipeline) runStage(stage pipelineStageInterface, sourceData <-chan int)
 }
 
 func main() {
+	logger.Log("main", "Программа запущена")
 
 	stopWorkChannel := make(chan bool)
 
-	filterNegative := new(pipelineStageFilterNegative)
-	filterNotMultiple := new(pipelineStageNotMultiple)
-	bufferStage := new(buffer)
-	terminalScanner := new(terminalScanner)
+	filterNegative := &pipelineStageFilterNegative{}
+	filterNotMultiple := &pipelineStageNotMultiple{}
+	bufferStage := &buffer{}
+	terminalScanner := &terminalScanner{}
 	// dataMaker := new(dataMaker)
 	// dataChannel := dataMaker.createData(stopWorkChannel)
 
@@ -215,9 +266,12 @@ func main() {
 	// result := ppl.runPipeline(dataChannel)
 	result := ppl.runPipeline(terminalScanner.startScan(stopWorkChannel))
 
+		logger.Log("main", "Ожидание результатов")
 	for r := range result {
 		fmt.Println("Мы прошли все стадии пайплайна:", r)
 	}
+
+		logger.Log("main", "Завершено")
 
 	// rb := createRingBuffer(30)
 
